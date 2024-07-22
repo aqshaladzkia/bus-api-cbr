@@ -1,0 +1,365 @@
+#basic code from lambda
+
+console.log("Loading function");
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+    DynamoDBDocumentClient,
+    ScanCommand,
+    PutCommand,
+    UpdateCommand,
+    GetCommand,
+    QueryCommand,
+    DeleteCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { marshall, unmarshall } from "@aws-sdk/util-dynamodb";
+
+const client = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(client);
+const TableName = "bus-inventory";
+
+// Define the name of the DDB table to perform the CRUD operations on
+
+/**
+ * Provide an event that contains the following keys:
+ *
+ *   - operation: one of 'create,' 'read,' 'update,' 'delete,' or 'echo'
+ *   - payload: a JSON object containing the parameters for the table item
+ *              to perform the operation on
+ */
+export const handler = async (event, context) => {
+    /////
+
+    //   async function getItem(primaryKey) {
+    //     //  const command = new QueryCommand({
+    //     //         TableName: "bus-db",
+    //     //         IndexName : 'deviceID',
+    //     //         KeyConditionExpression: "busStopName = :busStopName",
+    //     //         ExpressionAttributeValues: {
+    //     //           ":busStopName": {"S":"Shelter MIPA"},
+    //     //         },
+    //     //         ConsistentRead: true,
+    //     //       })
+    //       const command = new ScanCommand({
+
+    //           FilterExpression: "busStopName = :busStopName",
+    //             // For more information about data types,
+    //             // see https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html#HowItWorks.DataTypes and
+    //             // https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Programming.LowLevelAPI.html#Programming.LowLevelAPI.DataTypeDescriptors
+    //             ExpressionAttributeValues: {
+    //               ":busStopName": { S: "Shelter MIPA" },
+    //             },
+
+    //             TableName: "bus-db",
+
+    //         });
+
+    //       try {
+    //          const response = await docClient.send(command);
+    //          return response.Items;
+    //       } catch (error) {
+    //          console.error("Error retrieving item:", error);
+    //          throw error;
+    //       }
+    //      }
+
+    ////
+
+    const operation = event.operation;
+    const requestBody = event.payload;
+    var data = [];
+    let items;
+    switch (operation) {
+        // POST data bus
+        case "bus":
+            event.payload.TableName = "bus-inventory";
+            items = new ScanCommand(event.payload);
+
+            // var response = await client.send(items);
+            // response.Items.forEach(function (item) {
+            //   data.push(item);
+            // });
+
+            var response = await client.send(items);
+            data = response.Items.map((item) => {
+                // Menghilangkan tipe data (N, S, L) dari properti item
+                const sanitizedItem = {};
+                for (const key in item) {
+                    if (item.hasOwnProperty(key)) {
+                        sanitizedItem[key] = item[key][Object.keys(item[key])[0]];
+                    }
+                }
+                return sanitizedItem;
+            });
+            return {
+                statusCode: 200,
+                headers: {
+                    "Content-Type": "application/json", // Atur header Content-Type sebagai application/json
+                },
+                body: JSON.stringify({
+                    code: 200,
+                    message: "Success!",
+                    data: data,
+                }),
+            };
+
+        case "post-beacon":
+            // event.payload.TableName = "bus-inventory";
+            event.payload.TableName = "bus-db";
+            var res = event.payload;
+            var table_item = await docClient.send(new PutCommand(event.payload));
+            return {
+                statusCode: 200,
+                message: "Success upload beacon data",
+                data: [res],
+            };
+
+        ///////
+
+        case "find-bus":
+            event.payload.TableName = "bus-inventory";
+            var table_item = await docClient.send(new PutCommand(event.payload));
+            var res = event.payload;
+            return {
+                code: 200,
+
+                message: "Success!!",
+                res,
+            };
+
+        case "post-bus-stop":
+            event.payload.TableName = "bus-stop";
+            var res = event.payload;
+            var table_item = await docClient.send(new PutCommand(event.payload));
+
+            return {
+                code: 200,
+                message: "Success!",
+                res,
+            };
+
+        // case 'list-bus-stop':
+
+        //       // Set the correct table name
+        //         const params = new ScanCommand({
+        //                  TableName: 'bus-db',
+        //                  IndexName: 'timestamp-index',
+
+        //                 ScanIndexForward: false,
+        //                 Limit: 1
+        //         })
+        //       var response = await client.send(params);
+
+        //       data = response.Items.map(item=>{
+        //           if(item.busStopName){
+        //               return item.busStopName
+        //           }
+
+        //       });  // Extract only busStopName
+        //       data = unmarshall(data)
+        //       return {
+        //              busStopName:data[0]
+        //       };
+        case "update-gateway-deviceID":
+            if (requestBody.item) {
+                const putItem = {
+                    deviceID: requestBody.item.deviceID
+                }
+                const deviceInsertResult = await docClient.send(
+                    new PutCommand({
+                        TableName: "bus-db-device",
+                        Item: putItem,
+                    })
+                );
+                return {
+                    statusCode: 200,
+                    body: { result: deviceInsertResult },
+                };
+            } else {
+                return {
+                    statusCode: 500,
+                    body: { result: "failed" },
+                }
+            }
+
+
+        case "list-bus-stop":
+            let stopInfo = {}
+            const deviceScanResult = await docClient.send(
+                new ScanCommand({
+                    TableName: "bus-db-device"
+                })
+            );
+            if (deviceScanResult.Count > 0) {
+                for (let deviceItem of deviceScanResult.Items) {
+                    const stopInfoResult = await docClient.send(
+                        new QueryCommand({
+                            TableName: "bus-db",
+                            KeyConditionExpression: "#deviceID = :deviceID",
+                            ExpressionAttributeNames: {
+                                "#deviceID": "deviceID",
+                            },
+                            ExpressionAttributeValues: {
+                                ":deviceID": deviceItem.deviceID,
+                            },
+                            ScanIndexForward: false,
+                            Limit: 1,
+                        })
+                    );
+                    if (stopInfoResult.Count > 0) {
+                        stopInfo[deviceItem.deviceID] = stopInfoResult.Items[0]
+                    }
+                }
+                
+                let maxTimestampEntry = {};
+                let maxTimestamp = 0;
+                
+                Object.keys(stopInfo).forEach(key => {
+                    console.log(key);
+                    const entry = stopInfo[key];
+                    if (entry.timestamp > maxTimestamp) {
+                        maxTimestamp = entry.timestamp;
+                        maxTimestampEntry = entry;
+                    }
+                });
+
+                return {
+                    statusCode: 200,
+                    body: maxTimestampEntry,
+                };
+            }
+
+        case "list-bus-stops":
+            let stopsInfo = {}
+            const deviceScanResult_2 = await docClient.send(
+                new ScanCommand({
+                    TableName: "bus-db-device"
+                })
+            );
+            if (deviceScanResult_2.Count > 0) {
+                for (let deviceItem of deviceScanResult_2.Items) {
+                    const stopInfoResult = await docClient.send(
+                        new QueryCommand({
+                            TableName: "bus-db",
+                            KeyConditionExpression: "#deviceID = :deviceID",
+                            ExpressionAttributeNames: {
+                                "#deviceID": "deviceID",
+                            },
+                            ExpressionAttributeValues: {
+                                ":deviceID": deviceItem.deviceID,
+                            },
+                            ScanIndexForward: false,
+                            Limit: 1,
+                        })
+                    );
+                    if (stopInfoResult.Count > 0) {
+                        stopsInfo[deviceItem.deviceID] = stopInfoResult.Items[0]
+                    }
+                }
+                
+                const stopInfoArray = Object.values(stopsInfo)
+                // let maxTimestampEntry = {};
+                // let maxTimestamp = 0;
+                
+                // Object.keys(stopInfo).forEach(key => {
+                //     console.log(key);
+                //     const entry = stopInfo[key];
+                //     if (entry.timestamp > maxTimestamp) {
+                //         maxTimestamp = entry.timestamp;
+                //         maxTimestampEntry = entry;
+                //     }
+                // });
+
+                return {
+                    statusCode: 200,
+                    body: stopInfoArray,
+                };
+            }
+
+        // case 'list-bus-stop':
+
+        //         // Set ScanCommand dengan ekspresi untuk memilih hanya data yang lebih baru dari referensi waktu
+        //         // items = new GetItemCommand(event.payload);
+        //         const command = new ScanCommand({
+
+        //           FilterExpression: "busStopName = :busStopName",
+        //             // For more information about data types,
+        //             // see https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.NamingRulesDataTypes.html#HowItWorks.DataTypes and
+        //             // https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Programming.LowLevelAPI.html#Programming.LowLevelAPI.DataTypeDescriptors
+        //             ExpressionAttributeValues: {
+        //               ":busStopName": { S: event.payload.Key.busStopName },
+        //             },
+
+        //             TableName: "bus-db",
+
+        //         });
+        //         var response = await docClient.send(command);
+        //         data = response.Items.map(item => {
+        //                   // Menghilangkan tipe data (N, S, L) dari properti item
+        //                 const sanitizedItem = {};
+        //                 for (const key in item) {
+        //                     if (item.hasOwnProperty(key)) {
+        //                       sanitizedItem[key] = item[key][Object.keys(item[key])[0]];
+        //                     }
+        //                 }
+        //                 return sanitizedItem;
+        //             });
+        //         return {
+        //             "statusCode": 200,
+        //             headers: {
+        //                 'Content-Type': 'application/json' // Set Content-Type header
+        //             },
+        //             body: JSON.stringify({
+        //                 code: 200,
+        //                 message: "Success!",
+        //                 data: data
+        //             })
+        //         };
+
+        // case 'list-bus-stop':
+        //     const command = new ScanCommand({
+        //         TableName: "bus-db",
+        //         FilterExpression: "busStopName = :busStopName",
+        //         ExpressionAttributeValues: {
+        //             ":busStopName": { S: event.payload.Key.busStopName },
+        //         },
+        //     });
+
+        //     try {
+        //         const response = await docClient.send(command);
+
+        //         // Urutkan hasil pemindaian berdasarkan waktu (misalnya, jika ada timestamp)
+        //         response.Items.sort((a, b) => {
+        //             // Sesuaikan dengan format timestamp yang digunakan
+        //             return new Date(b.timestamp) - new Date(a.timestamp);
+        //         });
+
+        //         return {
+        //             "statusCode": 200,
+        //             headers: {
+        //                 'Content-Type': 'application/json'
+        //             },
+        //             body: JSON.stringify({
+        //                 code: 200,
+        //                 message: "Success!",
+        //                 // Mengambil item terbaru dari hasil pemindaian
+        //                 data: response.Items.length > 0 ? [response.Items[0]] : []
+        //             })
+        //         };
+        //     } catch (error) {
+        //         console.error("Error:", error);
+        //         return {
+        //             "statusCode": 500,
+        //             headers: {
+        //                 'Content-Type': 'application/json'
+        //             },
+        //             body: JSON.stringify({
+        //                 code: 500,
+        //                 message: "Internal Server Error"
+        //             })
+        //         };
+        //     };
+
+        default:
+            return "Failed to load the data";
+    }
+};
